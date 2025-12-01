@@ -1,0 +1,75 @@
+version: '3.9'
+
+services:
+  # ── MongoDB ──────────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    networks: [tosswell]
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Qdrant vector database (for RAG support bot) ─────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks: [tosswell]
+    ports:
+      - "6333:6333"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:6333/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Backend API ───────────────────────────────────────────────────────────
+  server:
+    build: ./server
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    env_file: ./server/.env
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/tosswell
+      - QDRANT_URL=http://qdrant:6333
+      - NODE_ENV=production
+    ports:
+      - "5000:5000"
+    networks: [tosswell]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5000/api/menu"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Frontend (Nginx) ──────────────────────────────────────────────────────
+  client:
+    build:
+      context: ./client
+      args:
+        VITE_API_URL: /api
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    networks: [tosswell]
+
+volumes:
+  mongo_data:
+  qdrant_data:
+
+networks:
+  tosswell:
+    driver: bridge
