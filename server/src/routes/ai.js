@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Pizza, Inventory, Review, Order } from '../models.js';
 import { auth, httpError } from '../middleware.js';
+import { qvacChat, isQvacReady } from '../qvac-provider.js';
 
 const r = Router();
 // Note: NO global auth middleware here — each route declares its own auth
@@ -399,6 +400,43 @@ Provide actionable insights for the restaurant manager:`;
       lowStockCount: lowStock.length,
     },
     generatedAt: new Date(),
+  });
+});
+
+// ── POST /api/ai/chat/local — QVAC local model (no Gemini required) ──────────
+// Active when AI_PROVIDER=qvac in .env, or always available as a fallback.
+// Accepts same message format as /api/ai/chat so the frontend can switch
+// providers by changing a single env variable.
+// BUSINESS LOGIC PROTECTION: this endpoint only generates text responses.
+// It cannot read or write orders, inventory, coupons, or payments.
+r.post('/chat/local', auth('user'), async (req, res) => {
+  const { messages } = z.object({
+    messages: z.array(z.object({
+      role:    z.enum(['user', 'assistant', 'system']),
+      content: z.string().trim().min(1).max(2000),
+    })).min(1).max(20),
+  }).parse(req.body);
+
+  if (!isQvacReady()) {
+    return res.status(503).json({
+      reply:    null,
+      error:    'QVAC local model is not available. Set AI_PROVIDER=gemini to use Gemini instead.',
+      provider: 'qvac',
+      ready:    false,
+    });
+  }
+
+  const reply = await qvacChat(messages);
+  res.json({ reply, provider: 'qvac', ready: true });
+});
+
+// ── GET /api/ai/provider — which AI provider is active ───────────────────────
+r.get('/provider', (req, res) => {
+  const provider = process.env.AI_PROVIDER || 'gemini';
+  res.json({
+    active:     provider,
+    qvacReady:  isQvacReady(),
+    geminiKey:  !!process.env.GEMINI_API_KEY,
   });
 });
 

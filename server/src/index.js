@@ -30,6 +30,7 @@ import reportsRoutes   from './routes/reports.js';
 import zonesRoutes     from './routes/zones.js';
 import pushRoutes      from './routes/push.js';
 import { startStockJob } from './jobs/stockAlert.js';
+import { startQvac, stopQvac } from './qvac-provider.js';
 
 // ── Env validation ────────────────────────────────────────────────────────
 const required = ['MONGO_URI', 'JWT_SECRET', 'RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'GEMINI_API_KEY'];
@@ -114,3 +115,12 @@ server.keepAliveTimeout = 65000;
 server.headersTimeout   = 66000;
 
 startStockJob();
+
+// Start QVAC local model only when configured — non-blocking, fails gracefully
+if (process.env.AI_PROVIDER === 'qvac') {
+  startQvac().catch((e) => console.warn('[QVAC] Startup error (non-fatal):', e.message));
+}
+
+// Graceful shutdown: unload QVAC model before process exits
+process.once('SIGINT',  () => stopQvac().finally(() => process.exit(0)));
+process.once('SIGTERM', () => stopQvac().finally(() => process.exit(0)));
